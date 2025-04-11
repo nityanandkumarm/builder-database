@@ -2,7 +2,7 @@ package com.builder.database.service;
 
 import com.builder.database.builder.SqlBuilder;
 import com.builder.database.builder.SqlBuilderFactory;
-import com.builder.database.config.DatabaseOperationException;
+import com.builder.database.config.errors.DatabaseOperationException;
 import com.builder.database.config.FlushProperties;
 import com.builder.database.dto.GenericResultRowDto;
 import com.builder.database.dto.IndexDefinitionDto;
