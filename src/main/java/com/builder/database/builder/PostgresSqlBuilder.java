@@ -183,4 +183,37 @@ public class PostgresSqlBuilder implements SqlBuilder {
                 .orElse("TEXT");
     }
 
+    @Override
+    public String buildInsertSql(String schema, String table, Map<String, String> row, boolean tempTable) {
+        return buildBulkInsertSql(schema, table, List.of(row), tempTable);
+    }
+
+    @Override
+    public String buildBulkInsertSql(String schema, String table, List<Map<String, String>> rows, boolean tempTable) {
+        if (rows == null || rows.isEmpty()) {
+            throw new IllegalArgumentException("Insert rows cannot be empty");
+        }
+
+        String tableName = quote(schema) + "." + quote((tempTable ? "__tmp_write_" : "") + table);
+        Set<String> allColumns = rows.get(0).keySet();
+
+        String columnClause = allColumns.stream()
+                .map(this::quote)
+                .collect(Collectors.joining(", "));
+
+        String valueClause = rows.stream()
+                .map(row -> allColumns.stream()
+                        .map(col -> "'" + row.getOrDefault(col, "").replace("'", "''") + "'")
+                        .collect(Collectors.joining(", ", "(", ")"))
+                ).collect(Collectors.joining(",\n"));
+
+        return String.format("INSERT INTO %s (%s) VALUES%n%s;", tableName, columnClause, valueClause);
+    }
+
+    @Override
+    public String buildTableExistsSql(String schema, String tableName) {
+        return "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = '" +
+                schema + "' AND table_name = '" + tableName + "');";
+    }
+
 }

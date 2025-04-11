@@ -13,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/tables")
@@ -63,5 +64,16 @@ public class TableController {
         var dto = tableMapper.toDto(model);
         return ResponseEntity.ok(dto);
     }
+
+    @PostMapping("/{schema}/{table}/insert")
+    public ResponseEntity<String> insertRows(
+            @PathVariable String schema,
+            @PathVariable String table,
+            @RequestBody List<Map<String, String>> rows
+    ) {
+        tableService.insertRows(schema, table, rows);
+        return ResponseEntity.ok("Rows inserted successfully.");
+    }
+
 
 }
