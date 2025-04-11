@@ -24,5 +24,13 @@ public interface SqlBuilder {
             Map<String, Object> filters,
             List<AggregationRequest> aggregations
     );
+
     String buildFlushFromTempToActualSql(TableDefinitionRequest definition, int batchSize);
+
+    String buildInsertSql(String schema, String table, Map<String, String> row, boolean tempTable);
+
+    String buildBulkInsertSql(String schema, String table, List<Map<String, String>> rows, boolean tempTable);
+
+    String buildTableExistsSql(String schema, String tableName);
+
 }

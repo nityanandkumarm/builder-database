@@ -1,9 +1,6 @@
 package com.builder.database.controller;
 
-import com.builder.database.dto.GenericResultRowDto;
-import com.builder.database.dto.IndexDefinitionDto;
-import com.builder.database.dto.SelectQueryRequestDto;
-import com.builder.database.dto.TableCreateRequestDto;
+import com.builder.database.dto.*;
 import com.builder.database.mapper.TableMapper;
 import com.builder.database.service.TableMetadataService;
 import com.builder.database.service.TableService;
@@ -62,6 +59,12 @@ public class TableController {
         var model = tableMetadataService.getTableDefinition(schema, table, includeIndexes);
         var dto = tableMapper.toDto(model);
         return ResponseEntity.ok(dto);
+    }
+
+    @PostMapping("/insert")
+    public ResponseEntity<String> insertRows(@RequestBody @Valid InsertRequestDto request) {
+        tableService.insertRows(request.getSchemaName(), request.getTableName(), request.getRows());
+        return ResponseEntity.ok("Rows inserted successfully.");
     }
 
 }
