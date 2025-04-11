@@ -1,9 +1,6 @@
 package com.builder.database.controller;
 
-import com.builder.database.dto.GenericResultRowDto;
-import com.builder.database.dto.IndexDefinitionDto;
-import com.builder.database.dto.SelectQueryRequestDto;
-import com.builder.database.dto.TableCreateRequestDto;
+import com.builder.database.dto.*;
 import com.builder.database.mapper.TableMapper;
 import com.builder.database.service.TableMetadataService;
 import com.builder.database.service.TableService;
@@ -13,7 +10,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/tables")
@@ -65,15 +61,10 @@ public class TableController {
         return ResponseEntity.ok(dto);
     }
 
-    @PostMapping("/{schema}/{table}/insert")
-    public ResponseEntity<String> insertRows(
-            @PathVariable String schema,
-            @PathVariable String table,
-            @RequestBody List<Map<String, String>> rows
-    ) {
-        tableService.insertRows(schema, table, rows);
+    @PostMapping("/insert")
+    public ResponseEntity<String> insertRows(@RequestBody @Valid InsertRequestDto request) {
+        tableService.insertRows(request.getSchemaName(), request.getTableName(), request.getRows());
         return ResponseEntity.ok("Rows inserted successfully.");
     }
-
 
 }
