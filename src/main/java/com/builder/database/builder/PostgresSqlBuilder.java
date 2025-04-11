@@ -153,9 +153,6 @@ public class PostgresSqlBuilder implements SqlBuilder {
         String tempTable = quote(def.getSchemaName()) + "." + quote("__tmp_write_" + def.getTableName());
 
         List<String> columnNames = def.getColumns().stream().map(ColumnDefinition::getName).toList();
-        columnNames = new ArrayList<>(columnNames);
-        columnNames.add(LAST_UPDATE_DATE);
-        columnNames.add(IS_DELETED);
 
         String insertColumns = columnNames.stream().map(this::quote).collect(Collectors.joining(", "));
 
@@ -166,7 +163,6 @@ public class PostgresSqlBuilder implements SqlBuilder {
         return """
         INSERT INTO %s (%s)
         SELECT %s FROM %s
-        WHERE isDeleted = 'false'
         LIMIT %d;
         """.formatted(actualTable, insertColumns, selectColumns, tempTable, batchSize);
     }
