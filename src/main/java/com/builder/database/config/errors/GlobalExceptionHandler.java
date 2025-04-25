@@ -8,7 +8,6 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -17,7 +16,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ValidationErrorResponse> handleValidation(MethodArgumentNotValidException ex) {
         List<FieldViolation> errors = ex.getBindingResult().getFieldErrors().stream()
                 .map(err -> new FieldViolation(err.getField(), err.getDefaultMessage()))
-                .collect(Collectors.toList());
+                .toList();
 
         ValidationErrorResponse response = new ValidationErrorResponse(
                 Instant.now(),
