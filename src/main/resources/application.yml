@@ -19,3 +19,6 @@ spring:
   database:
     flush:
       batch-size: 2000
+
+  insert:
+    validateFields: true
