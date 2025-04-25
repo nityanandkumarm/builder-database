@@ -144,8 +144,8 @@ The service will be available at: `http://localhost:8080`.
 - [x] Indexing support
 - [x] Generic select with filters and rollups
 - [x] Metadata API
-- [ ] Insert API → writes to temp or actual table based on context
-- [ ] Flush API → batch-based transfer to actual table
+- [x] Insert API → writes to temp or actual table based on context
+- [x] Flush API → batch-based transfer to actual table
 - [ ] Cron job for automated flush
 - [ ] Soft delete cleanup jobs
 - [ ] View & Materialized View creation
