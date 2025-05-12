@@ -1,15 +1,21 @@
 package com.builder.database.service;
 
+import com.builder.database.config.errors.DatabaseOperationException;
 import com.builder.database.model.ColumnDefinition;
 import com.builder.database.model.IndexDefinition;
 import com.builder.database.model.TableDefinitionRequest;
+import com.builder.database.repository.TableMetadataRepository;
+import com.builder.database.repository.TempTableMetadataRepository;
+import com.builder.database.entity.TableMetadata;
+import com.builder.database.entity.TempTableMetadata;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import java.sql.Connection;
-import java.sql.DatabaseMetaData;
 import java.util.*;
 
 @Slf4j
@@ -18,59 +24,80 @@ import java.util.*;
 public class TableMetadataServiceImpl implements TableMetadataService {
 
     private final JdbcTemplate jdbcTemplate;
+    private final TableMetadataRepository tableMetadataRepository;
+    private final TempTableMetadataRepository tempTableMetadataRepository;
+    private final ObjectMapper objectMapper;
 
     @Override
+    @Cacheable(value = "tableDefinitions", key = "#schema + '.' + #table + '.' + #includeIndexes")
     public TableDefinitionRequest getTableDefinition(String schema, String table, boolean includeIndexes) {
-        boolean actualExists = tableExists(schema, table);
-        boolean tempExists = tableExists(schema, "__tmp_write_" + table);
+        // Check main table metadata
+        Optional<TableMetadata> tableMetadata = tableMetadataRepository.findBySchemaNameAndTableName(schema, table);
 
-        String doesTempExists = tempExists ? "__tmp_write_" + table : null;
-        String targetTable = actualExists ? table : doesTempExists;
-        if (targetTable == null) {
-            throw new IllegalArgumentException("No table or temp write table found in schema: " + schema);
+        if (tableMetadata.isPresent()) {
+            List<String> columnNames = parseColumnsJson(tableMetadata.get().getColumnsJson());
+            List<ColumnDefinition> columns = getColumnsFromMetadata(schema, table, columnNames);
+            List<IndexDefinition> indexes = includeIndexes ? getIndexes(schema, table) : List.of();
+
+            return TableDefinitionRequest.builder()
+                    .schemaName(schema)
+                    .tableName(table)
+                    .columns(columns)
+                    .indexes(indexes)
+                    .temporaryWriteTable(false)
+                    .build();
         }
 
-        List<ColumnDefinition> columns = getColumnsFromMetadata(schema, targetTable);
-        List<IndexDefinition> indexes = (includeIndexes && actualExists)
-                ? getIndexes(schema, table)
-                : List.of();
+        // Check temp table metadata
+        Optional<TempTableMetadata> tempMetadata = tempTableMetadataRepository
+                .findBySchemaNameAndOriginalTableName(schema, table);
 
-        return TableDefinitionRequest.builder()
-                .schemaName(schema)
-                .tableName(table)
-                .columns(columns)
-                .indexes(indexes)
-                .temporaryWriteTable(doesTempExists != null)
-                .build();
-    }
-    private boolean tableExists(String schema, String tableName) {
-        String sql = """
-        SELECT EXISTS (
-            SELECT 1 FROM information_schema.tables
-            WHERE table_schema = ? AND table_name = ?
-        )
-    """;
-        return Boolean.TRUE.equals(jdbcTemplate.queryForObject(sql, Boolean.class, schema, tableName));
+        if (tempMetadata.isPresent()) {
+            List<String> columnNames = parseColumnsJson(tempMetadata.get().getColumnsJson());
+            List<ColumnDefinition> columns = getColumnsFromMetadata(schema, tempMetadata.get().getTempTableName(), columnNames);
+
+            return TableDefinitionRequest.builder()
+                    .schemaName(schema)
+                    .tableName(table)
+                    .columns(columns)
+                    .indexes(List.of())
+                    .temporaryWriteTable(true)
+                    .build();
+        }
+
+        throw new IllegalArgumentException("No table or temp write table found in schema: " + schema);
     }
 
-    private List<ColumnDefinition> getColumnsFromMetadata(String schema, String table) {
-        try (Connection connection = Objects.requireNonNull(jdbcTemplate.getDataSource(), "No DataSource Found").getConnection()) {
-            DatabaseMetaData metaData = connection.getMetaData();
+    private List<String> parseColumnsJson(String columnsJson) {
+        try {
+            return objectMapper.readValue(columnsJson, new TypeReference<List<String>>() {});
+        } catch (Exception e) {
+            log.error("Failed to parse columns JSON", e);
+            return List.of();
+        }
+    }
 
+    private List<ColumnDefinition> getColumnsFromMetadata(String schema, String table, List<String> columnNames) {
+        try (var connection = Objects.requireNonNull(jdbcTemplate.getDataSource()).getConnection()) {
+            var metaData = connection.getMetaData();
             List<ColumnDefinition> columns = new ArrayList<>();
 
             try (var rs = metaData.getColumns(null, schema, table, null)) {
                 while (rs.next()) {
-                    columns.add(ColumnDefinition.builder()
-                            .name(rs.getString("COLUMN_NAME"))
-                            .type(rs.getString("TYPE_NAME"))
-                            .notNull(!"YES".equalsIgnoreCase(rs.getString("IS_NULLABLE")))
-                            .defaultValue(rs.getString("COLUMN_DEF"))
-                            .primaryKey(false)
-                            .build());
+                    String columnName = rs.getString("COLUMN_NAME");
+                    if (columnNames.contains(columnName)) {
+                        columns.add(ColumnDefinition.builder()
+                                .name(columnName)
+                                .type(rs.getString("TYPE_NAME"))
+                                .notNull(!"YES".equalsIgnoreCase(rs.getString("IS_NULLABLE")))
+                                .defaultValue(rs.getString("COLUMN_DEF"))
+                                .primaryKey(false)
+                                .build());
+                    }
                 }
             }
 
+            // Get primary key information
             try (var pkRs = metaData.getPrimaryKeys(null, schema, table)) {
                 Set<String> primaryKeys = new HashSet<>();
                 while (pkRs.next()) {
@@ -81,7 +108,7 @@ public class TableMetadataServiceImpl implements TableMetadataService {
 
             return columns;
         } catch (Exception ex) {
-            throw new RuntimeException("Failed to read column metadata for " + schema + "." + table, ex);
+            throw new DatabaseOperationException("Failed to read column metadata for " + schema + "." + table, ex);
         }
     }
 
