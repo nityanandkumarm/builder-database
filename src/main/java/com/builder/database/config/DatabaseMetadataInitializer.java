@@ -1,4 +1,4 @@
-package com.builder.database.service;
+package com.builder.database.config;
 
 import com.builder.database.entity.TableMetadata;
 import com.builder.database.entity.TempTableMetadata;
@@ -7,15 +7,19 @@ import com.builder.database.repository.TempTableMetadataRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationListener;
 import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.web.server.ServerErrorException;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 @RequiredArgsConstructor
 @Component
+@Slf4j
 public class DatabaseMetadataInitializer implements ApplicationListener<ContextRefreshedEvent> {
 
     private final TableMetadataRepository tableMetadataRepository;
@@ -28,23 +32,20 @@ public class DatabaseMetadataInitializer implements ApplicationListener<ContextR
     @Override
     @Transactional
     public void onApplicationEvent(ContextRefreshedEvent event) {
-        Map<String, List<String>> allColumns = fetchColumnsGroupedByTable();
-        Set<String> tempTables = fetchTempTables();
-        populateTableMetadata(allColumns, tempTables);
-        populateTempTableMetadata(allColumns);
-    }
+        try {
+            // Clear existing data using TRUNCATE
+            jdbcTemplate.execute("TRUNCATE TABLE table_metadata, temp_table_metadata RESTART IDENTITY CASCADE");
 
-    private Map<String, List<String>> fetchColumnsGroupedByTable() {
-        String sql = "SELECT table_schema, table_name, column_name FROM information_schema.columns " +
-                "WHERE table_schema NOT IN ('information_schema', 'pg_catalog')";
-        return jdbcTemplate.query(sql, rs -> {
-            Map<String, List<String>> map = new HashMap<>();
-            while (rs.next()) {
-                String key = rs.getString("table_schema") + "." + rs.getString("table_name");
-                map.computeIfAbsent(key, k -> new ArrayList<>()).add(rs.getString("column_name"));
+            Map<String, List<String>> allColumns = fetchColumnsGroupedByTable();
+            Set<String> tempTables = fetchTempTables();
+            if(allColumns == null || allColumns.isEmpty()) {
+                return;
             }
-            return map;
-        });
+            populateTableMetadata(allColumns, tempTables);
+            populateTempTableMetadata(allColumns);
+        } catch (Exception e) {
+            throw new ServerErrorException("Failed to initialize metadata tables", e);
+        }
     }
 
     private Set<String> fetchTempTables() {
@@ -56,7 +57,7 @@ public class DatabaseMetadataInitializer implements ApplicationListener<ContextR
     }
 
     private void populateTableMetadata(Map<String, List<String>> allColumns, Set<String> tempTables) {
-        allColumns.entrySet().stream()
+        List<TableMetadata> tableMetadataList = allColumns.entrySet().stream()
                 .filter(e -> !e.getKey().contains(TEMP_PREFIX))
                 .map(entry -> {
                     String[] parts = entry.getKey().split("\\.");
@@ -71,11 +72,13 @@ public class DatabaseMetadataInitializer implements ApplicationListener<ContextR
                             .columnsJson(writeJson(entry.getValue()))
                             .build();
                 })
-                .forEach(tableMetadataRepository::save);
+                .toList();
+
+        tableMetadataRepository.saveAll(tableMetadataList);
     }
 
     private void populateTempTableMetadata(Map<String, List<String>> allColumns) {
-        allColumns.entrySet().stream()
+        List<TempTableMetadata> tempTableMetadataList = allColumns.entrySet().stream()
                 .filter(e -> e.getKey().contains(TEMP_PREFIX))
                 .map(entry -> {
                     String[] parts = entry.getKey().split("\\.");
@@ -90,14 +93,45 @@ public class DatabaseMetadataInitializer implements ApplicationListener<ContextR
                             .columnsJson(writeJson(entry.getValue()))
                             .build();
                 })
-                .forEach(tempTableMetadataRepository::save);
+                .toList();
+
+        tempTableMetadataRepository.saveAll(tempTableMetadataList);
     }
 
     private String writeJson(List<String> columnNames) {
         try {
             return objectMapper.writeValueAsString(columnNames);
         } catch (Exception e) {
-            throw new RuntimeException("Failed to write JSON for columns", e);
+            throw new ServerErrorException("Failed to write JSON for columns", e);
+        }
+    }
+
+    private Map<String, List<String>> fetchColumnsGroupedByTable() {
+        String sql = """
+            SELECT table_schema, table_name, column_name 
+            FROM information_schema.columns 
+            WHERE table_schema NOT IN ('information_schema', 'pg_catalog', 'flyway') 
+            AND table_schema NOT LIKE 'pg_%'
+            ORDER BY table_schema, table_name, ordinal_position
+            """;
+
+        try {
+            return jdbcTemplate.query(sql, (rs, rowNum) -> new Object[]{
+                    rs.getString("table_schema"),
+                    rs.getString("table_name"),
+                    rs.getString("column_name")
+            }).stream().collect(
+                    Collectors.groupingBy(
+                            row -> (row)[0] + "." + (row)[1],
+                            Collectors.mapping(
+                                    row -> (String) (row)[2],
+                                    Collectors.toList()
+                            )
+                    )
+            );
+        } catch (Exception e) {
+            log.error("Failed to fetch columns from database", e);
+            return new HashMap<>();
         }
     }
 }
