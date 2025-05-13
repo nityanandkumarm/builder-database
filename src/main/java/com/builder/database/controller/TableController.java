@@ -32,7 +32,7 @@ public class TableController {
         return ResponseEntity.ok(results);
     }
 
-    @PostMapping("/{schema}/{table}/indexes")
+    @PostMapping("/indexes/{schema}/{table}")
     public ResponseEntity<String> createIndex(
             @PathVariable String schema,
             @PathVariable String table,
@@ -42,7 +42,7 @@ public class TableController {
         return ResponseEntity.ok("Index created successfully.");
     }
 
-    @PostMapping("/{schema}/{table}/flush")
+    @PostMapping("/flush/{schema}/{table}")
     public ResponseEntity<String> flushTempTable(
             @PathVariable String schema,
             @PathVariable String table) {
@@ -50,7 +50,7 @@ public class TableController {
         return ResponseEntity.ok("Flush completed.");
     }
 
-    @GetMapping("/{schema}/{table}")
+    @GetMapping("/metadata/{schema}/{table}")
     public ResponseEntity<TableCreateRequestDto> getTableMetadata(
             @PathVariable String schema,
             @PathVariable String table,

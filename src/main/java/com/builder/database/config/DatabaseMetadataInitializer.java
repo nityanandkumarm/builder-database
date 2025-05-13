@@ -33,7 +33,6 @@ public class DatabaseMetadataInitializer implements ApplicationListener<ContextR
     @Transactional
     public void onApplicationEvent(ContextRefreshedEvent event) {
         try {
-            // Clear existing data using TRUNCATE
             jdbcTemplate.execute("TRUNCATE TABLE table_metadata, temp_table_metadata RESTART IDENTITY CASCADE");
 
             Map<String, List<String>> allColumns = fetchColumnsGroupedByTable();

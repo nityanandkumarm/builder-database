@@ -17,15 +17,15 @@ public class PostgresSqlBuilder implements SqlBuilder {
     public String buildCreateTableSql(TableDefinitionRequest request) {
         String fullTableName = quote(request.getSchemaName()) + "." + quote(request.getTableName());
 
-        List<String> columnDefs = request.getColumns().stream()
+        List<String> columnDef = request.getColumns().stream()
                 .map(this::buildActualColumnDefinition)
                 .collect(Collectors.toList());
 
-        columnDefs.add(quote(LAST_UPDATE_DATE) + " TIMESTAMP NOT NULL");
-        columnDefs.add(quote(IS_DELETED) + " BOOLEAN NOT NULL DEFAULT FALSE");
+        columnDef.add(quote(LAST_UPDATE_DATE) + " TIMESTAMP NOT NULL");
+        columnDef.add(quote(IS_DELETED) + " BOOLEAN NOT NULL DEFAULT FALSE");
 
         return "CREATE TABLE IF NOT EXISTS " + fullTableName + " (\n" +
-                String.join(",\n", columnDefs) + "\n" +
+                String.join(",\n", columnDef) + "\n" +
                 ");";
     }
 
@@ -35,15 +35,15 @@ public class PostgresSqlBuilder implements SqlBuilder {
         String tempTableName = quote(request.getSchemaName()) + "." +
                 quote("__tmp_write_" + request.getTableName());
 
-        List<String> columnDefs = request.getColumns().stream()
+        List<String> columnDef = request.getColumns().stream()
                 .map(col -> quote(col.getName()) + " " + COLUMN_DATA_TYPE)
                 .collect(Collectors.toList());
 
-        columnDefs.add(quote(LAST_UPDATE_DATE) + " " + COLUMN_DATA_TYPE);
-        columnDefs.add(quote(IS_DELETED) + " " + COLUMN_DATA_TYPE);
+        columnDef.add(quote(LAST_UPDATE_DATE) + " " + COLUMN_DATA_TYPE);
+        columnDef.add(quote(IS_DELETED) + " " + COLUMN_DATA_TYPE);
 
         return "CREATE TABLE IF NOT EXISTS " + tempTableName + " (\n" +
-                String.join(",\n", columnDefs) + "\n" +
+                String.join(",\n", columnDef) + "\n" +
                 ");";
     }
 
@@ -79,13 +79,19 @@ public class PostgresSqlBuilder implements SqlBuilder {
 
     @Override
     public String buildSelectQuerySql(String schemaName,
-                                      String tableName,
-                                      List<String> columns,
-                                      Map<String, Object> filters,
-                                      List<AggregationRequest> aggregations) {
+                                    String tableName,
+                                    List<String> columns,
+                                    Map<String, Object> filters,
+                                    List<AggregationRequest> aggregations) {
 
         String fullTableName = quote(schemaName) + "." + quote(tableName);
-        String selectClause = buildSelectClause(columns, aggregations);
+
+        List<String> selectExpressions = new ArrayList<>();
+        selectExpressions.addAll(buildRegularColumnsClause(columns));
+        selectExpressions.addAll(buildAggregationClause(aggregations));
+
+        String selectClause = selectExpressions.isEmpty() ? "*"
+                            : String.join(", ", selectExpressions);
 
         StringBuilder sql = new StringBuilder("SELECT ")
                 .append(selectClause)
@@ -93,29 +99,60 @@ public class PostgresSqlBuilder implements SqlBuilder {
                 .append(fullTableName);
 
         appendWhereClause(sql, filters);
-        appendGroupByClause(sql, columns, aggregations);
+        appendGroupByClause(sql, columns);
 
         return sql.toString();
     }
 
-    private String buildSelectClause(List<String> columns, List<AggregationRequest> aggregations) {
-        List<String> selectFields = new ArrayList<>();
+    private List<String> buildRegularColumnsClause(List<String> columns) {
+        if (columns == null || columns.isEmpty()) {
+            return List.of();
+        }
+        return columns.stream()
+                .map(this::quote)
+                .toList();
+    }
 
-        if (columns != null && !columns.isEmpty()) {
-            selectFields.addAll(columns.stream().map(this::quote).toList());
+    private List<String> buildAggregationClause(List<AggregationRequest> aggregations) {
+        if (aggregations == null || aggregations.isEmpty()) {
+            return List.of();
+        }
+        return aggregations.stream()
+                .map(this::buildAggregationExpression)
+                .toList();
+    }
+
+    private String buildAggregationExpression(AggregationRequest agg) {
+        String column = agg.getColumn();
+        String function = agg.getFunction().toUpperCase();
+
+        String aggExpr = switch (function) {
+            case "COUNT" -> column.equals("*") ? "COUNT(*)" : "COUNT(" + quote(column) + ")";
+            case "SUM" -> "SUM(" + quote(column) + ")";
+            case "AVG" -> "AVG(" + quote(column) + ")";
+            case "MAX" -> "MAX(" + quote(column) + ")";
+            case "MIN" -> "MIN(" + quote(column) + ")";
+            case "COUNT_DISTINCT" -> "COUNT(DISTINCT " + quote(column) + ")";
+            default -> throw new IllegalArgumentException("Unsupported aggregation function: " + function);
+        };
+
+        return agg.getAlias() != null && !agg.getAlias().isBlank()
+               ? aggExpr + " AS " + quote(agg.getAlias())
+               : aggExpr;
+    }
+
+    private void appendGroupByClause(StringBuilder sql, List<String> columns) {
+        if (columns == null || columns.isEmpty()) {
+            return;
         }
 
-        if (aggregations != null) {
-            for (AggregationRequest agg : aggregations) {
-                String aggExpr = agg.getFunction() + "(" + quote(agg.getColumn()) + ")";
-                if (agg.getAlias() != null && !agg.getAlias().isBlank()) {
-                    aggExpr += " AS " + quote(agg.getAlias());
-                }
-                selectFields.add(aggExpr);
-            }
-        }
+        String groupBy = columns.stream()
+                .map(this::quote)
+                .collect(Collectors.joining(", "));
 
-        return selectFields.isEmpty() ? "*" : String.join(", ", selectFields);
+        if (!groupBy.isEmpty()) {
+            sql.append(" GROUP BY ").append(groupBy);
+        }
     }
 
     private void appendWhereClause(StringBuilder sql, Map<String, Object> filters) {
@@ -126,14 +163,6 @@ public class PostgresSqlBuilder implements SqlBuilder {
                 .collect(Collectors.joining(" AND "));
         sql.append(" WHERE ").append(whereClause);
     }
-
-    private void appendGroupByClause(StringBuilder sql, List<String> columns, List<AggregationRequest> aggregations) {
-        if (aggregations == null || aggregations.isEmpty() || columns == null || columns.isEmpty()) return;
-
-        String groupBy = columns.stream().map(this::quote).collect(Collectors.joining(", "));
-        sql.append(" GROUP BY ").append(groupBy);
-    }
-
 
     private String formatValue(Object value) {
         if (value instanceof Number || value instanceof Boolean) {
